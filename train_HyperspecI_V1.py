@@ -12,11 +12,13 @@ import torch.utils.data
 from architecture import model_generator
 import numpy as np
 import torch.nn as nn
+from tqdm import tqdm
 
 
 parser = argparse.ArgumentParser(description="Model training of HyperspecI-V1")
 parser.add_argument("--method", type=str, default='V1_srnet', help='Model')
-parser.add_argument('--batch_size', type=int, default=64, help='batch size')
+parser.add_argument('--train_batch_size', type=int, default=64, help='training batch size')
+parser.add_argument('--val_batch_size', type=int, default=64, help='validation batch size')
 parser.add_argument("--end_epoch", type=int, default=200, help="number of epochs")
 parser.add_argument("--init_lr", type=float, default=4e-4, help="initial learning rate")
 parser.add_argument("--gpu_id", type=str, default='0', help='select gpu')
@@ -86,13 +88,12 @@ def main():
         
     start_epoch = 0
 
-    train_loader = DataLoader(dataset=train_data, batch_size=opt.batch_size, shuffle=True, num_workers=8,
+    train_loader = DataLoader(dataset=train_data, batch_size=opt.train_batch_size, shuffle=True, num_workers=8,
                 pin_memory=True, drop_last=True)
-    val_loader = DataLoader(dataset=val_data, batch_size=1, shuffle=False, num_workers=8, pin_memory=True)
+    val_loader = DataLoader(dataset=val_data, batch_size=opt.val_batch_size, shuffle=False, num_workers=8, pin_memory=True)
     per_epoch_iteration = len(train_loader)
     total_iteration = per_epoch_iteration * opt.end_epoch
     iteration = start_epoch * per_epoch_iteration
-    print(f"Iteration per epoch: {per_epoch_iteration}")
 
     #opt.init_lr
     optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=opt.init_lr,
@@ -109,11 +110,12 @@ def main():
         model.train()
         losses = AverageMeter()
 
-        for i, (HSIs) in enumerate(train_loader):
+        train_pbar = tqdm(train_loader, desc=f"Train Epoch {epoch + 1}/{opt.end_epoch}", leave=False)
+        for i, (HSIs) in enumerate(train_pbar):
 
             HSIs = HSIs.cuda()
             #selecte the sub-patches radomly
-            mask_patch = data_processing.get_random_mask_patches(mask=mask, image_size=opt.image_size, patch_size=opt.train_patch_size, batch_size=opt.batch_size)
+            mask_patch = data_processing.get_random_mask_patches(mask=mask, image_size=opt.image_size, patch_size=opt.train_patch_size, batch_size=opt.train_batch_size)
             #Generate the measurements using traning HSIs and selected sub-pattern
             inputs, targets = data_processing.get_mos_hsi(hsi=HSIs, mask=mask_patch, sigma=opt.sigma, mos_size=opt.train_patch_size[0], hsi_input_size=opt.train_patch_size[0], hsi_target_size=opt.train_patch_size[0])
 
@@ -135,6 +137,10 @@ def main():
                 
             losses.update(loss.data)
             iteration = iteration + 1
+            train_pbar.set_postfix({
+                "lr": f"{lr:.2e}",
+                "loss": f"{float(losses.avg):.6f}"
+            })
 
         end_time = time.time()
         epoch_time = end_time - strat_time
@@ -162,7 +168,8 @@ def Validate(val_loader, model, mask):
     losses_psnr = AverageMeter()
     losses_mrae = AverageMeter()
     losses_sam = AverageMeter()
-    for i, (HSIs) in enumerate(val_loader):
+    val_pbar = tqdm(val_loader, desc="Validate", leave=False)
+    for i, (HSIs) in enumerate(val_pbar):
         HSIs = HSIs.cuda()
         batch_size = HSIs.size(0)
 
@@ -183,6 +190,10 @@ def Validate(val_loader, model, mask):
             losses_rmse.update(loss_rmse.data)
             losses_mrae.update(loss_mrae.data)
             losses_sam.update(loss_sam.data)
+            val_pbar.set_postfix({
+                "rmse": f"{float(losses_rmse.avg):.6f}",
+                "psnr": f"{float(losses_psnr.avg):.4f}"
+            })
 
     return losses_rmse.avg, losses_psnr.avg, losses_mrae.avg, losses_sam.avg
 
