@@ -1,11 +1,10 @@
-import hdf5storage
 import torch
 import argparse
 import os
 import torch.backends.cudnn as cudnn
 from torch.utils.data import DataLoader
 from getdataset import TestDataset_MOS
-from my_utils import initialize_logger
+from my_utils import initialize_logger, load_mat_compat
 import torch.utils.data
 from architecture import model_generator
 import numpy as np
@@ -32,7 +31,7 @@ def main():
     cudnn.benchmark = True
 
 
-    mask_init = hdf5storage.loadmat(opt.mask_path)['mask']
+    mask_init = load_mat_compat(opt.mask_path)['mask']
     mask = np.maximum(mask_init, 0)
     mask = mask / mask.max()
     mask = mask.astype(np.float32)

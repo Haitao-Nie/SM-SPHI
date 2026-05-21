@@ -4,12 +4,50 @@ import torch.nn as nn
 import torch
 import random
 import os
-import hdf5storage
 import matplotlib.pyplot as plt
 import cv2
 from scipy import interpolate
 import torch.nn.functional as F
 import h5py
+
+def _load_hsi_array(file_path):
+    with h5py.File(file_path, 'r') as f:
+        if 'hsi' in f:
+            arr = f['hsi'][:]
+        elif 'patch' in f:
+            arr = f['patch'][:]
+        elif 'cube' in f:
+            arr = f['cube'][:]
+        else:
+            raise KeyError(f'No supported key in {file_path}. Expected one of: hsi, patch, cube.')
+    return np.asarray(arr)
+
+def _to_chw(arr):
+    if arr.ndim != 3:
+        raise ValueError(f'Expected 3D array, got shape={arr.shape}')
+    # If channel is already first (common: C,H,W), keep it.
+    # Otherwise treat as H,W,C and transpose to C,H,W.
+    if arr.shape[0] <= 200 and arr.shape[0] < arr.shape[1] and arr.shape[0] < arr.shape[2]:
+        return arr
+    return np.transpose(arr, (2, 0, 1))
+
+def _random_crop_chw(hsi, patch_size):
+    patch_size_h, patch_size_w = patch_size
+    h, w = hsi.shape[1], hsi.shape[2]
+    if h < patch_size_h or w < patch_size_w:
+        raise ValueError(f'Patch size {patch_size} is larger than sample spatial size {(h, w)}')
+    max_h = h - patch_size_h
+    max_w = w - patch_size_w
+    random_h = random.randint(0, max_h) if max_h > 0 else 0
+    random_w = random.randint(0, max_w) if max_w > 0 else 0
+    return hsi[:, random_h:random_h + patch_size_h, random_w:random_w + patch_size_w]
+
+def _normalize_patch(x):
+    x = x.astype(np.float32)
+    vmax = float(np.max(x))
+    if vmax > 0:
+        x = x / vmax
+    return x
 
 
 class TrainDataset_V1(Dataset):
@@ -38,14 +76,9 @@ class TrainDataset_V1(Dataset):
         return img
 
     def __getitem__(self, idx):
-
-
-        f = h5py.File(self.data_path + self.data_list[idx], 'r')
-        hsi = f['hsi'][:]
-        f.close()
-
-        patch_size_h = self.patch_size[0]
-        patch_size_w = self.patch_size[1]
+        file_path = os.path.join(self.data_path, self.data_list[idx])
+        hsi = _load_hsi_array(file_path)
+        hsi = _to_chw(hsi)
 
         if self.arg:
             rotTimes = random.randint(0, 3)
@@ -53,11 +86,8 @@ class TrainDataset_V1(Dataset):
             hFlip = random.randint(0, 1)
             hsi = self.arguement(hsi, rotTimes, vFlip, hFlip)
 
-        random_h = random.randint(0,hsi.shape[1] - patch_size_h -1)
-        random_w = random.randint(0,hsi.shape[2] - patch_size_w -1)
-        output_hsi = hsi[:, random_h:random_h+patch_size_h, random_w:random_w+patch_size_w]
-        output_hsi = output_hsi.astype(np.float32)
-        output_hsi = output_hsi / output_hsi.max()
+        output_hsi = _random_crop_chw(hsi, self.patch_size)
+        output_hsi = _normalize_patch(output_hsi)
 
         return np.ascontiguousarray(output_hsi)
 
@@ -92,13 +122,8 @@ class ValidDataset_V1(Dataset):
         return img
 
     def __getitem__(self, idx):
-
-        f = h5py.File(self.data_paths[idx], 'r')
-        hsi = f['hsi'][:]
-        f.close()
-
-        patch_size_h = self.patch_size[0]
-        patch_size_w = self.patch_size[1]
+        hsi = _load_hsi_array(self.data_paths[idx])
+        hsi = _to_chw(hsi)
 
        
         if self.arg:
@@ -107,11 +132,8 @@ class ValidDataset_V1(Dataset):
             hFlip = random.randint(0, 1)
             hsi = self.arguement(hsi, rotTimes, vFlip, hFlip)
 
-        random_h = random.randint(0, hsi.shape[1] - patch_size_h -1)
-        random_w = random.randint(0, hsi.shape[2] - patch_size_w -1)
-        output_hsi = hsi[:, random_h:random_h+patch_size_h, random_w:random_w+patch_size_w]
-        output_hsi = output_hsi.astype(np.float32)
-        output_hsi = output_hsi / output_hsi.max()
+        output_hsi = _random_crop_chw(hsi, self.patch_size)
+        output_hsi = _normalize_patch(output_hsi)
 
         return np.ascontiguousarray(output_hsi)
 
@@ -149,15 +171,15 @@ class TrainDataset_V2(Dataset):
         return img
 
     def __getitem__(self, idx):
-
-
-        f = h5py.File(self.data_path + self.data_list[idx], 'r')
-        hsi = f['hsi'][:]
+        file_path = os.path.join(self.data_path, self.data_list[idx])
+        hsi = _load_hsi_array(file_path)
+        hsi = _to_chw(hsi)
+        if hsi.shape[0] <= np.max(self.select_index):
+            raise ValueError(
+                f'V2 dataset expects at least {np.max(self.select_index) + 1} channels before band selection, '
+                f'but got {hsi.shape[0]} channels from {file_path}.'
+            )
         hsi = hsi[self.select_index, :, :]
-        f.close()
-
-        patch_size_h = self.patch_size[0]
-        patch_size_w = self.patch_size[1]
 
 
         if self.arg:
@@ -166,11 +188,8 @@ class TrainDataset_V2(Dataset):
             hFlip = random.randint(0, 1)
             hsi = self.arguement(hsi, rotTimes, vFlip, hFlip)
 
-        random_h = random.randint(0,hsi.shape[1] - patch_size_h -1)
-        random_w = random.randint(0,hsi.shape[2] - patch_size_w -1)
-        output_hsi = hsi[:, random_h:random_h+patch_size_h, random_w:random_w+patch_size_w]
-        output_hsi = output_hsi.astype(np.float32)
-        output_hsi = output_hsi / output_hsi.max()
+        output_hsi = _random_crop_chw(hsi, self.patch_size)
+        output_hsi = _normalize_patch(output_hsi)
 
         return np.ascontiguousarray(output_hsi)
 
@@ -207,14 +226,14 @@ class ValidDataset_V2(Dataset):
         return img
 
     def __getitem__(self, idx):
-
-        f = h5py.File(self.data_paths[idx], 'r')
-        hsi = f['hsi'][:]
+        hsi = _load_hsi_array(self.data_paths[idx])
+        hsi = _to_chw(hsi)
+        if hsi.shape[0] <= np.max(self.select_index):
+            raise ValueError(
+                f'V2 dataset expects at least {np.max(self.select_index) + 1} channels before band selection, '
+                f'but got {hsi.shape[0]} channels from {self.data_paths[idx]}.'
+            )
         hsi = hsi[self.select_index, :, :]
-        f.close()
-
-        patch_size_h = self.patch_size[0]
-        patch_size_w = self.patch_size[1]
 
        
         if self.arg:
@@ -223,11 +242,8 @@ class ValidDataset_V2(Dataset):
             hFlip = random.randint(0, 1)
             hsi = self.arguement(hsi, rotTimes, vFlip, hFlip)
 
-        random_h = random.randint(0, hsi.shape[1] - patch_size_h -1)
-        random_w = random.randint(0, hsi.shape[2] - patch_size_w -1)
-        output_hsi = hsi[:, random_h:random_h+patch_size_h, random_w:random_w+patch_size_w]
-        output_hsi = output_hsi.astype(np.float32)
-        output_hsi = output_hsi / output_hsi.max()
+        output_hsi = _random_crop_chw(hsi, self.patch_size)
+        output_hsi = _normalize_patch(output_hsi)
 
         return np.ascontiguousarray(output_hsi)
 

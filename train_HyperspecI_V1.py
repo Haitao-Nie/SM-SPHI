@@ -1,4 +1,3 @@
-import hdf5storage
 import torch
 import argparse
 import os
@@ -7,7 +6,7 @@ from torch.autograd import Variable
 import torch.backends.cudnn as cudnn
 from torch.utils.data import DataLoader
 from getdataset import TrainDataset_V1, ValidDataset_V1
-from my_utils import AverageMeter, initialize_logger, save_checkpoint, Loss_RMSE, Loss_PSNR, Loss_TV, Loss_MRAE, Loss_SAM
+from my_utils import AverageMeter, initialize_logger, save_checkpoint, Loss_RMSE, Loss_PSNR, Loss_TV, Loss_MRAE, Loss_SAM, load_mat_compat
 from DataProcess import Data_Process
 import torch.utils.data
 from architecture import model_generator
@@ -26,12 +25,12 @@ parser.add_argument("--pretrained_model_path", type=str, default=None, help='pre
 parser.add_argument("--sigma", type=float, default=(0, 1 / 255, 2/255, 3/255), help="Sigma of Gaussian Noise")
 parser.add_argument("--mask_path", type=str, default='./MASK/Mask_HyperspecI_V1.mat', help='path of calibrated sensing matrix')
 parser.add_argument("--output_folder", type=str, default='./exp/HyperspecI_V1/', help='output path')
-parser.add_argument("--start_dir", type=int, default=(0, 0), help="size of test image coordinate")
-parser.add_argument("--image_size", type=int, default=(2048, 2048), help="size of test image")
-parser.add_argument("--train_patch_size", type=int, default=(512, 512), help="size of patch")
-parser.add_argument("--valid_patch_size", type=int, default=(512, 512), help="size of patch")
-parser.add_argument("--train_data_path", type=str, default="./Dataset_Train/HSI_400_1000/Train/", help='path datasets')
-parser.add_argument("--valid_data_path", type=str, default="./Dataset_Train/HSI_400_1000/Valid/", help='path datasets')
+parser.add_argument("--start_dir", type=int, nargs=2, default=(0, 0), help="size of test image coordinate")
+parser.add_argument("--image_size", type=int, nargs=2, default=(2048, 2048), help="size of test image")
+parser.add_argument("--train_patch_size", type=int, nargs=2, default=(64, 64), help="size of patch")
+parser.add_argument("--valid_patch_size", type=int, nargs=2, default=(64, 64), help="size of patch")
+parser.add_argument("--train_data_path", type=str, default="./ICVL_64/train/", help='path datasets')
+parser.add_argument("--valid_data_path", type=str, default="./ICVL_64/val/", help='path datasets')
 
 
 
@@ -45,18 +44,26 @@ criterion_sam = Loss_SAM()
 criterion_tv = Loss_TV(TVLoss_weight=float(0.5))
 data_processing = Data_Process()
 
-
-mask_init = hdf5storage.loadmat(opt.mask_path)['mask']
-print('mask_init:', mask_init.shape)
-mask = mask_init[:, opt.start_dir[0]:opt.start_dir[0]+opt.image_size[0], opt.start_dir[1]:opt.start_dir[1] + opt.image_size[1]]
-mask = np.maximum(mask, 0)
-mask = mask / mask.max()
-mask = torch.from_numpy(mask)
-mask = mask.cuda()
-print('mask:', mask.dtype, mask.shape, mask.max(), mask.mean(), mask.min())
+def load_mask():
+    mask_init = load_mat_compat(opt.mask_path)['mask']
+    print('mask_init:', mask_init.shape)
+    # Ensure mask is channel-first: [C, H, W]
+    if mask_init.ndim == 3 and mask_init.shape[0] > mask_init.shape[-1]:
+        mask_init = np.transpose(mask_init, (2, 0, 1))
+    mask = mask_init[
+        :,
+        opt.start_dir[0]:opt.start_dir[0] + opt.image_size[0],
+        opt.start_dir[1]:opt.start_dir[1] + opt.image_size[1]
+    ]
+    mask = np.maximum(mask, 0)
+    mask = mask / mask.max()
+    mask = torch.from_numpy(mask).cuda()
+    print('mask:', mask.dtype, mask.shape, mask.max(), mask.mean(), mask.min())
+    return mask
 
 def main():
     cudnn.benchmark = True
+    mask = load_mask()
 
     print("\nloading dataset ...")
     train_data = TrainDataset_V1(data_path=opt.train_data_path, patch_size=opt.train_patch_size,  arg=True)

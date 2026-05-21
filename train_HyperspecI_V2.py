@@ -1,4 +1,3 @@
-import hdf5storage
 import torch
 import argparse
 import os
@@ -7,7 +6,7 @@ from torch.autograd import Variable
 import torch.backends.cudnn as cudnn
 from torch.utils.data import DataLoader
 from getdataset import TrainDataset_V2, ValidDataset_V2
-from my_utils import AverageMeter, initialize_logger, save_checkpoint, Loss_RMSE, Loss_PSNR, Loss_TV, Loss_MRAE_V2, Loss_SAM_V2
+from my_utils import AverageMeter, initialize_logger, save_checkpoint, Loss_RMSE, Loss_PSNR, Loss_TV, Loss_MRAE_V2, Loss_SAM_V2, load_mat_compat
 from DataProcess import Data_Process
 import torch.utils.data
 from architecture import model_generator
@@ -44,7 +43,7 @@ criterion_tv = Loss_TV(TVLoss_weight=float(0.5))
 data_processing = Data_Process()
 
 
-mask_init = hdf5storage.loadmat(opt.mask_path)['mask']
+mask_init = load_mat_compat(opt.mask_path)['mask']
 mask = mask_init[:, opt.start_dir[0]:opt.start_dir[0]+opt.image_size[0], opt.start_dir[1]:opt.start_dir[1] + opt.image_size[1]]
 mask = np.maximum(mask, 0)
 mask = mask / mask.max()

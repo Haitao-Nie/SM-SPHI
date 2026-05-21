@@ -5,12 +5,23 @@ import torch.nn as nn
 import logging
 import numpy as np
 import os
-import hdf5storage
+import h5py
+from scipy.io import loadmat, savemat
 from math import exp
 from torch.autograd import Variable
 import torch.nn.functional as F
 def save_matv73(mat_name, var_name, var):
-    hdf5storage.savemat(mat_name, {var_name: var}, format='7.3', store_python_metadata=True)
+    savemat(mat_name, {var_name: var})
+
+def load_mat_compat(mat_path):
+    try:
+        return loadmat(mat_path)
+    except Exception:
+        data = {}
+        with h5py.File(mat_path, 'r') as f:
+            for k in f.keys():
+                data[k] = f[k][()]
+        return data
 
 class AverageMeter(object):
     def __init__(self):
