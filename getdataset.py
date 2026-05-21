@@ -1,180 +1,68 @@
-from torch.utils.data import Dataset
-import numpy as np
-import torch.nn as nn
-import torch
-import random
 import os
-import matplotlib.pyplot as plt
-import cv2
-from scipy import interpolate
-import torch.nn.functional as F
 import h5py
-
-def _load_hsi_array(file_path):
-    with h5py.File(file_path, 'r') as f:
-        if 'hsi' in f:
-            arr = f['hsi'][:]
-        elif 'patch' in f:
-            arr = f['patch'][:]
-        elif 'cube' in f:
-            arr = f['cube'][:]
-        else:
-            raise KeyError(f'No supported key in {file_path}. Expected one of: hsi, patch, cube.')
-    return np.asarray(arr)
-
-def _to_chw(arr):
-    if arr.ndim != 3:
-        raise ValueError(f'Expected 3D array, got shape={arr.shape}')
-    # If channel is already first (common: C,H,W), keep it.
-    # Otherwise treat as H,W,C and transpose to C,H,W.
-    if arr.shape[0] <= 200 and arr.shape[0] < arr.shape[1] and arr.shape[0] < arr.shape[2]:
-        return arr
-    return np.transpose(arr, (2, 0, 1))
-
-def _random_crop_chw(hsi, patch_size):
-    patch_size_h, patch_size_w = patch_size
-    h, w = hsi.shape[1], hsi.shape[2]
-    if h < patch_size_h or w < patch_size_w:
-        raise ValueError(f'Patch size {patch_size} is larger than sample spatial size {(h, w)}')
-    max_h = h - patch_size_h
-    max_w = w - patch_size_w
-    random_h = random.randint(0, max_h) if max_h > 0 else 0
-    random_w = random.randint(0, max_w) if max_w > 0 else 0
-    return hsi[:, random_h:random_h + patch_size_h, random_w:random_w + patch_size_w]
-
-def _normalize_patch(x):
-    x = x.astype(np.float32)
-    vmax = float(np.max(x))
-    if vmax > 0:
-        x = x / vmax
-    return x
+import torch
+import numpy as np
+from torch.utils.data import Dataset
 
 
-class TrainDataset_V1(Dataset):
-    def __init__(self, data_path, patch_size, arg=False):
+class HyperspectralDataset(Dataset):
+    """
+    Dataset that only provides hyperspectral datacubes X.
+    Forward measurement is handled by the encoder (forward model).
+    """
 
-        self.arg = arg
-        self.data_path = data_path
-        self.patch_size = patch_size
+    def __init__(self, root_dir):
+        """
+        Parameters
+        ----------
+        root_dir : str
+            Path to dataset split, e.g.
+            ICVL_64/train
+            ICVL_64/val
+            ICVL_64/test
+        """
+        super().__init__()
 
-        data_list = os.listdir(data_path)
-        data_list.sort()
+        self.root_dir = root_dir
+        self.files = sorted(
+            [f for f in os.listdir(root_dir) if f.endswith(".mat")]
+        )
 
-        self.data_list = data_list
-        self.img_num = len(self.data_list)
-
-    def arguement(self, img, rotTimes, vFlip, hFlip):
-        # Random rotation
-        for j in range(rotTimes):
-            img = np.rot90(img.copy(), axes=(1, 2))
-        # Random vertical Flip
-        for j in range(vFlip):
-            img = img[:, :, ::-1].copy()
-        # Random horizontal Flip
-        for j in range(hFlip):
-            img = img[:, ::-1, :].copy()
-        return img
-
-    def __getitem__(self, idx):
-        file_path = os.path.join(self.data_path, self.data_list[idx])
-        hsi = _load_hsi_array(file_path)
-        hsi = _to_chw(hsi)
-
-        if self.arg:
-            rotTimes = random.randint(0, 3)
-            vFlip = random.randint(0, 1)
-            hFlip = random.randint(0, 1)
-            hsi = self.arguement(hsi, rotTimes, vFlip, hFlip)
-
-        output_hsi = _random_crop_chw(hsi, self.patch_size)
-        output_hsi = _normalize_patch(output_hsi)
-
-        return np.ascontiguousarray(output_hsi)
+        assert len(self.files) > 0, f"No .mat files found in {root_dir}"
 
     def __len__(self):
-        return self.img_num
+        return len(self.files)
 
-class ValidDataset_V1(Dataset):
-    def __init__(self, data_path, patch_size, arg=False):
+    def __getitem__(self, index):
+        fname = self.files[index]
+        path = os.path.join(self.root_dir, fname)
 
-        self.arg = arg
-        self.data_paths = []
-        self.patch_size = patch_size
+        # --------------------------------------------------
+        # Load hyperspectral cube
+        # --------------------------------------------------
+        with h5py.File(path, "r") as f:
+            if "patch" in f:
+                cube = f["patch"][:]     # (H, W, C)
+            elif "cube" in f:
+                cube = f["cube"][:]      # (H, W, C)
+            else:
+                raise KeyError(
+                    f"{fname} does not contain 'patch' or 'cube'"
+                )
 
-        data_list = os.listdir(data_path)
-        data_list.sort()
-        for i in range(len(data_list)):
+        # --------------------------------------------------
+        # HWC -> CHW
+        # --------------------------------------------------
+        cube = cube.astype(np.float32)
+        cube = np.transpose(cube, (2, 0, 1))   # (C, H, W)
 
-            self.data_paths.append(data_path + data_list[i])
+        # # --------------------------------------------------
+        # # Normalization (per-cube)
+        # # --------------------------------------------------
+        # max_val = cube.max()
+        # if max_val > 0:
+        #     cube = cube / max_val
 
-        self.img_num = len(self.data_paths)
+        X = torch.from_numpy(cube)
 
-    def arguement(self, img, rotTimes, vFlip, hFlip):
-        # Random rotation
-        for j in range(rotTimes):
-            img = np.rot90(img.copy(), axes=(1, 2))
-        # Random vertical Flip
-        for j in range(vFlip):
-            img = img[:, :, ::-1].copy()
-        # Random horizontal Flip
-        for j in range(hFlip):
-            img = img[:, ::-1, :].copy()
-        return img
-
-    def __getitem__(self, idx):
-        hsi = _load_hsi_array(self.data_paths[idx])
-        hsi = _to_chw(hsi)
-
-       
-        if self.arg:
-            rotTimes = random.randint(0, 3)
-            vFlip = random.randint(0, 1)
-            hFlip = random.randint(0, 1)
-            hsi = self.arguement(hsi, rotTimes, vFlip, hFlip)
-
-        output_hsi = _random_crop_chw(hsi, self.patch_size)
-        output_hsi = _normalize_patch(output_hsi)
-
-        return np.ascontiguousarray(output_hsi)
-
-    def __len__(self):
-        return self.img_num
-
-
-
-
-
-
-class TestDataset_MOS(Dataset):
-    def __init__(self, data_path, data_list, start_dir, image_size, arg=False):
-
-        self.arg = arg
-        self.data_path = data_path
-
-        self.start_dir = start_dir
-        self.image_size = image_size
-
-        self.data_list = data_list
-
-        self.MOS_list = []
-
-        for i in range(len(data_list)):
-
-            bmp = cv2.imread(self.data_path + self.data_list[i])[:, :, 0]
-            bmp = bmp[self.start_dir[0]:self.start_dir[0]+self.image_size[0], self.start_dir[1]:self.start_dir[1] + self.image_size[1]]
-            bmp = bmp / bmp.max()
-            bmp = bmp.astype(np.float32)
-            mos = np.expand_dims(bmp, axis=0)
-            self.MOS_list.append(mos)
-            
-        self.img_num = len(self.data_list)
-
-    def __getitem__(self, idx):
-        mos_name = self.data_list[idx]
-        mos = self.MOS_list[idx]
-
-        return np.ascontiguousarray(mos), mos_name
-
-    def __len__(self):
-        return self.img_num
-
+        return X

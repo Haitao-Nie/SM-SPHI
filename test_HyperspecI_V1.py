@@ -3,12 +3,38 @@ import argparse
 import os
 import torch.backends.cudnn as cudnn
 from torch.utils.data import DataLoader
-from getdataset import TestDataset_MOS
-from my_utils import initialize_logger, load_mat_compat
+from torch.utils.data import Dataset
+from my_utils import load_mat_compat
 import torch.utils.data
 from architecture import model_generator
 import numpy as np
 import h5py
+import cv2
+
+
+class MOSImageDataset(Dataset):
+    def __init__(self, data_path, data_list, start_dir, image_size):
+        self.data_path = data_path
+        self.start_dir = start_dir
+        self.image_size = image_size
+        self.data_list = data_list
+        self.mos_list = []
+
+        for name in data_list:
+            bmp = cv2.imread(os.path.join(self.data_path, name))[:, :, 0]
+            bmp = bmp[
+                self.start_dir[0]:self.start_dir[0] + self.image_size[0],
+                self.start_dir[1]:self.start_dir[1] + self.image_size[1]
+            ]
+            bmp = bmp / bmp.max()
+            bmp = bmp.astype(np.float32)
+            self.mos_list.append(np.expand_dims(bmp, axis=0))
+
+    def __getitem__(self, idx):
+        return np.ascontiguousarray(self.mos_list[idx]), self.data_list[idx]
+
+    def __len__(self):
+        return len(self.data_list)
 
 parser = argparse.ArgumentParser(description="Reconstruct hypersepctral images from measurements")
 parser.add_argument("--method", type=str, default='V1_srnet', help='Model')
@@ -47,7 +73,7 @@ def main():
     test_list = os.listdir(opt.image_folder)
     test_list.sort()
 
-    test_data = TestDataset_MOS(data_path=opt.image_folder, data_list=test_list, start_dir=opt.start_dir, image_size=opt.image_size, arg=False)
+    test_data = MOSImageDataset(data_path=opt.image_folder, data_list=test_list, start_dir=opt.start_dir, image_size=opt.image_size)
     test_loader = DataLoader(dataset=test_data, batch_size=opt.batch_size, shuffle=False, num_workers=2, pin_memory=True, drop_last=True)
     mask_test = mask.repeat(opt.batch_size, 1, 1, 1)
     model.eval()

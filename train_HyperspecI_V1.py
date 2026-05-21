@@ -5,13 +5,12 @@ import time
 from torch.autograd import Variable
 import torch.backends.cudnn as cudnn
 from torch.utils.data import DataLoader
-from getdataset import TrainDataset_V1, ValidDataset_V1
+from getdataset import HyperspectralDataset
 from my_utils import AverageMeter, initialize_logger, save_checkpoint, Loss_RMSE, Loss_PSNR, Loss_TV, Loss_MRAE, Loss_SAM, load_mat_compat
 from DataProcess import Data_Process
 import torch.utils.data
 from architecture import model_generator
 import numpy as np
-import torch.nn as nn
 from tqdm import tqdm
 
 
@@ -28,8 +27,7 @@ parser.add_argument("--mask_path", type=str, default='./MASK/Mask_HyperspecI_V1.
 parser.add_argument("--output_folder", type=str, default='./exp/HyperspecI_V1/', help='output path')
 parser.add_argument("--start_dir", type=int, nargs=2, default=(0, 0), help="size of test image coordinate")
 parser.add_argument("--image_size", type=int, nargs=2, default=(2048, 2048), help="size of test image")
-parser.add_argument("--train_patch_size", type=int, nargs=2, default=(64, 64), help="size of patch")
-parser.add_argument("--valid_patch_size", type=int, nargs=2, default=(64, 64), help="size of patch")
+parser.add_argument("--patch_size", type=int, nargs=2, default=(64, 64), help="HSI patch size")
 parser.add_argument("--train_data_path", type=str, default="./ICVL_64/train/", help='path datasets')
 parser.add_argument("--valid_data_path", type=str, default="./ICVL_64/val/", help='path datasets')
 
@@ -67,9 +65,9 @@ def main():
     mask = load_mask()
 
     print("\nloading dataset ...")
-    train_data = TrainDataset_V1(data_path=opt.train_data_path, patch_size=opt.train_patch_size,  arg=True)
+    train_data = HyperspectralDataset(root_dir=opt.train_data_path)
     print('len(train_data):', len(train_data))
-    val_data = ValidDataset_V1(data_path=opt.valid_data_path, patch_size=opt.valid_patch_size, arg=True)
+    val_data = HyperspectralDataset(root_dir=opt.valid_data_path)
     print('len(valid_data):', len(val_data))
     output_path = opt.output_folder
 
@@ -114,9 +112,9 @@ def main():
         for i, (HSIs) in enumerate(train_pbar):
 
             HSIs = HSIs.cuda()
-            mask_patch = data_processing.get_fixed_center_mask_patches(mask=mask, image_size=opt.image_size, patch_size=opt.train_patch_size, batch_size=opt.train_batch_size)
+            mask_patch = data_processing.get_fixed_center_mask_patches(mask=mask, image_size=opt.image_size, patch_size=opt.patch_size, batch_size=opt.train_batch_size)
             #Generate the measurements using traning HSIs and selected sub-pattern
-            inputs, targets = data_processing.get_mos_hsi(hsi=HSIs, mask=mask_patch, sigma=opt.sigma, mos_size=opt.train_patch_size[0], hsi_input_size=opt.train_patch_size[0], hsi_target_size=opt.train_patch_size[0])
+            inputs, targets = data_processing.get_mos_hsi(hsi=HSIs, mask=mask_patch, sigma=opt.sigma, mos_size=opt.patch_size[0], hsi_input_size=opt.patch_size[0], hsi_target_size=opt.patch_size[0])
 
             inputs = Variable(inputs)
             targets = Variable(targets)
@@ -172,10 +170,10 @@ def Validate(val_loader, model, mask):
         HSIs = HSIs.cuda()
         batch_size = HSIs.size(0)
 
-        mask_patch = data_processing.get_fixed_center_mask_patches(mask=mask, image_size=opt.image_size, patch_size=opt.valid_patch_size, batch_size=batch_size)
+        mask_patch = data_processing.get_fixed_center_mask_patches(mask=mask, image_size=opt.image_size, patch_size=opt.patch_size, batch_size=batch_size)
         
         #Generate the measurements using traning HSIs and selected sub-pattern
-        inputs, targets = data_processing.get_mos_hsi(hsi=HSIs, mask=mask_patch, sigma=opt.sigma, mos_size=opt.valid_patch_size[0], hsi_input_size=opt.valid_patch_size[0], hsi_target_size=opt.valid_patch_size[0])
+        inputs, targets = data_processing.get_mos_hsi(hsi=HSIs, mask=mask_patch, sigma=opt.sigma, mos_size=opt.patch_size[0], hsi_input_size=opt.patch_size[0], hsi_target_size=opt.patch_size[0])
 
         with torch.no_grad():
             outputs = model(inputs, mask_patch)
