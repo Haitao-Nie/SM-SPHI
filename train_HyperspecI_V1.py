@@ -114,8 +114,7 @@ def main():
         for i, (HSIs) in enumerate(train_pbar):
 
             HSIs = HSIs.cuda()
-            #selecte the sub-patches radomly
-            mask_patch = data_processing.get_random_mask_patches(mask=mask, image_size=opt.image_size, patch_size=opt.train_patch_size, batch_size=opt.train_batch_size)
+            mask_patch = data_processing.get_fixed_center_mask_patches(mask=mask, image_size=opt.image_size, patch_size=opt.train_patch_size, batch_size=opt.train_batch_size)
             #Generate the measurements using traning HSIs and selected sub-pattern
             inputs, targets = data_processing.get_mos_hsi(hsi=HSIs, mask=mask_patch, sigma=opt.sigma, mos_size=opt.train_patch_size[0], hsi_input_size=opt.train_patch_size[0], hsi_target_size=opt.train_patch_size[0])
 
@@ -173,8 +172,7 @@ def Validate(val_loader, model, mask):
         HSIs = HSIs.cuda()
         batch_size = HSIs.size(0)
 
-        #selecte the sub-patches radomly
-        mask_patch = data_processing.get_random_mask_patches(mask=mask, image_size=opt.image_size, patch_size=opt.valid_patch_size, batch_size=batch_size)
+        mask_patch = data_processing.get_fixed_center_mask_patches(mask=mask, image_size=opt.image_size, patch_size=opt.valid_patch_size, batch_size=batch_size)
         
         #Generate the measurements using traning HSIs and selected sub-pattern
         inputs, targets = data_processing.get_mos_hsi(hsi=HSIs, mask=mask_patch, sigma=opt.sigma, mos_size=opt.valid_patch_size[0], hsi_input_size=opt.valid_patch_size[0], hsi_target_size=opt.valid_patch_size[0])
