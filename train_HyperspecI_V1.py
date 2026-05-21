@@ -16,9 +16,8 @@ import torch.nn as nn
 
 parser = argparse.ArgumentParser(description="Model training of HyperspecI-V1")
 parser.add_argument("--method", type=str, default='V1_srnet', help='Model')
-parser.add_argument('--batch_size', type=int, default=8, help='batch size')
+parser.add_argument('--batch_size', type=int, default=64, help='batch size')
 parser.add_argument("--end_epoch", type=int, default=200, help="number of epochs")
-parser.add_argument("--epoch_sam_num", type=int, default=5000, help="per_epoch_iteration")
 parser.add_argument("--init_lr", type=float, default=4e-4, help="initial learning rate")
 parser.add_argument("--gpu_id", type=str, default='0', help='select gpu')
 parser.add_argument("--pretrained_model_path", type=str, default=None, help='pre-trained model path')
@@ -68,14 +67,9 @@ def main():
     print("\nloading dataset ...")
     train_data = TrainDataset_V1(data_path=opt.train_data_path, patch_size=opt.train_patch_size,  arg=True)
     print('len(train_data):', len(train_data))
-    print(f"Iteration per epoch: {len(train_data)}")
     val_data = ValidDataset_V1(data_path=opt.valid_data_path, patch_size=opt.valid_patch_size, arg=True)
     print('len(valid_data):', len(val_data))
     output_path = opt.output_folder
-
-    # iterations
-    per_epoch_iteration = opt.epoch_sam_num // opt.batch_size
-    total_iteration = per_epoch_iteration*opt.end_epoch
 
     if not os.path.exists(output_path):
         os.makedirs(output_path)
@@ -91,7 +85,14 @@ def main():
         criterion_mrae.cuda()
         
     start_epoch = 0
+
+    train_loader = DataLoader(dataset=train_data, batch_size=opt.batch_size, shuffle=True, num_workers=8,
+                pin_memory=True, drop_last=True)
+    val_loader = DataLoader(dataset=val_data, batch_size=1, shuffle=False, num_workers=8, pin_memory=True)
+    per_epoch_iteration = len(train_loader)
+    total_iteration = per_epoch_iteration * opt.end_epoch
     iteration = start_epoch * per_epoch_iteration
+    print(f"Iteration per epoch: {per_epoch_iteration}")
 
     #opt.init_lr
     optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=opt.init_lr,
@@ -104,14 +105,10 @@ def main():
     record_rmse_loss = 10000
     strat_time = time.time()
     
-    while iteration < total_iteration:
+    for epoch in range(start_epoch, opt.end_epoch):
         model.train()
         losses = AverageMeter()
-        
-        train_loader = DataLoader(dataset=train_data, batch_size=opt.batch_size, shuffle=True, num_workers=8,
-                    pin_memory=True, drop_last=True)
-        val_loader = DataLoader(dataset=val_data, batch_size=1, shuffle=False, num_workers=8, pin_memory=True)
-        
+
         for i, (HSIs) in enumerate(train_loader):
 
             HSIs = HSIs.cuda()
@@ -139,28 +136,25 @@ def main():
             losses.update(loss.data)
             iteration = iteration + 1
 
-            if iteration % per_epoch_iteration == 0:
-                epoch = iteration // per_epoch_iteration
-                end_time = time.time()
-                epoch_time = end_time - strat_time
-                strat_time = time.time()
-                rmse_loss, psnr_loss, mrae_loss, sam_loss = Validate(val_loader, model, mask)
+        end_time = time.time()
+        epoch_time = end_time - strat_time
+        strat_time = time.time()
+        rmse_loss, psnr_loss, mrae_loss, sam_loss = Validate(val_loader, model, mask)
 
-                # Save model
-                if torch.abs(
-                        record_rmse_loss - rmse_loss) < 0.0001 or rmse_loss < record_rmse_loss or iteration % 10000 == 0:
-                    print(f'Saving to {output_path}')
-                    save_checkpoint(output_path, (epoch), iteration, model, optimizer)
-                    if rmse_loss < record_rmse_loss:
-                        record_rmse_loss = rmse_loss
-                # print loss
-                print(" Iter[%06d/%06d], Epoch[%06d], Time[%06d],  learning rate : %.9f, Train Loss: %.9f, "
-                      "Test RMSE: %.9f, Test PSNR: %.9f, Test MRAE: %.9f, Test SAM: %.9f "
-                      % (iteration, total_iteration, epoch, epoch_time, lr, losses.avg, rmse_loss, psnr_loss, mrae_loss, sam_loss))
+        # Save model
+        if torch.abs(record_rmse_loss - rmse_loss) < 0.0001 or rmse_loss < record_rmse_loss or iteration % 10000 == 0:
+            print(f'Saving to {output_path}')
+            save_checkpoint(output_path, (epoch + 1), iteration, model, optimizer)
+            if rmse_loss < record_rmse_loss:
+                record_rmse_loss = rmse_loss
+        # print loss
+        print(" Epoch[%06d], Time[%06d], learning rate: %.9f, Train Loss: %.9f, "
+              "Val RMSE: %.9f, Val PSNR: %.9f, Val MRAE: %.9f, Val SAM: %.9f "
+              % (epoch + 1, epoch_time, lr, losses.avg, rmse_loss, psnr_loss, mrae_loss, sam_loss))
 
-                logger.info(" Iter[%06d/%06d], Epoch[%06d], Time[%06d],  learning rate : %.9f, Train Loss: %.9f, "
-                      "Test RMSE: %.9f, Test PSNR: %.9f, Test MRAE: %.9f, Test SAM: %.9f "
-                      % (iteration, total_iteration, epoch, epoch_time, lr, losses.avg, rmse_loss, psnr_loss, mrae_loss, sam_loss))
+        logger.info(" Epoch[%06d], Time[%06d], learning rate: %.9f, Train Loss: %.9f, "
+              "Val RMSE: %.9f, Val PSNR: %.9f, Val MRAE: %.9f, Val SAM: %.9f "
+              % (epoch + 1, epoch_time, lr, losses.avg, rmse_loss, psnr_loss, mrae_loss, sam_loss))
         
 def Validate(val_loader, model, mask):
     model.eval()
@@ -170,9 +164,10 @@ def Validate(val_loader, model, mask):
     losses_sam = AverageMeter()
     for i, (HSIs) in enumerate(val_loader):
         HSIs = HSIs.cuda()
+        batch_size = HSIs.size(0)
 
         #selecte the sub-patches radomly
-        mask_patch = data_processing.get_random_mask_patches(mask=mask, image_size=opt.image_size, patch_size=opt.train_patch_size, batch_size=opt.batch_size)
+        mask_patch = data_processing.get_random_mask_patches(mask=mask, image_size=opt.image_size, patch_size=opt.valid_patch_size, batch_size=batch_size)
         
         #Generate the measurements using traning HSIs and selected sub-pattern
         inputs, targets = data_processing.get_mos_hsi(hsi=HSIs, mask=mask_patch, sigma=opt.sigma, mos_size=opt.valid_patch_size[0], hsi_input_size=opt.valid_patch_size[0], hsi_target_size=opt.valid_patch_size[0])
