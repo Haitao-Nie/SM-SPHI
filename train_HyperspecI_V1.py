@@ -86,9 +86,9 @@ def main():
         
     start_epoch = 0
 
-    train_loader = DataLoader(dataset=train_data, batch_size=opt.train_batch_size, shuffle=True, num_workers=4,
+    train_loader = DataLoader(dataset=train_data, batch_size=opt.train_batch_size, shuffle=True, num_workers=2,
                 pin_memory=True, drop_last=True, persistent_workers=True)
-    val_loader = DataLoader(dataset=val_data, batch_size=opt.val_batch_size, shuffle=False, num_workers=4,
+    val_loader = DataLoader(dataset=val_data, batch_size=opt.val_batch_size, shuffle=False, num_workers=2,
                 pin_memory=True, persistent_workers=True)
     per_epoch_iteration = len(train_loader)
     total_iteration = per_epoch_iteration * opt.end_epoch
