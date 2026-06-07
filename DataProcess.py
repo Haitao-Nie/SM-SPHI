@@ -20,6 +20,11 @@ class Data_Process(object):
         fixed_h = max((image_size[0] - patch_size[0]) // 2, 0)
         fixed_w = max((image_size[1] - patch_size[1]) // 2, 0)
         mask_patch = mask[:, fixed_h:fixed_h + patch_size[0], fixed_w:fixed_w + patch_size[1]]
+        # Apply an RGGB-style spatial gate and zero out the two G positions.
+        spatial_gate = torch.ones((patch_size[0], patch_size[1]), device=mask_patch.device, dtype=mask_patch.dtype)
+        spatial_gate[0::2, 1::2] = 0
+        spatial_gate[1::2, 0::2] = 0
+        mask_patch = mask_patch * spatial_gate.unsqueeze(0)
         mask_patch = mask_patch / mask_patch.max()
         mask_patches = mask_patch.unsqueeze(0).repeat(batch_size, 1, 1, 1)
         return mask_patches

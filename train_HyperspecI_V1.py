@@ -15,7 +15,7 @@ from tqdm import tqdm
 
 
 parser = argparse.ArgumentParser(description="Model training of HyperspecI-V1")
-parser.add_argument("--method", type=str, default='V1_srnet', help='Model')
+parser.add_argument("--method", type=str, default='V1_srnet_pconv', help='Model')
 parser.add_argument('--train_batch_size', type=int, default=64, help='training batch size')
 parser.add_argument('--val_batch_size', type=int, default=64, help='validation batch size')
 parser.add_argument("--end_epoch", type=int, default=200, help="number of epochs")

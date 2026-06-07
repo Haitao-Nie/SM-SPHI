@@ -37,7 +37,7 @@ class MOSImageDataset(Dataset):
         return len(self.data_list)
 
 parser = argparse.ArgumentParser(description="Reconstruct hypersepctral images from measurements")
-parser.add_argument("--method", type=str, default='V1_srnet', help='Model')
+parser.add_argument("--method", type=str, default='V1_srnet_pconv', help='Model')
 parser.add_argument("--gpu_id", type=str, default='0', help='path log files')
 parser.add_argument('--batch_size', type=int, default=1, help='batch size')
 parser.add_argument("--mask_path", type=str, default='./MASK/Mask_HyperspecI_V1.mat', help='path log files')

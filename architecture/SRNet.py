@@ -6,6 +6,7 @@ import math
 import warnings
 from torch.nn.init import _calculate_fan_in_and_fan_out
 import numbers
+from .partialconv2d import PartialConv2d
 
 def _no_grad_trunc_normal_(tensor, mean, std, a, b):
     def norm_cdf(x):
@@ -178,14 +179,35 @@ class SAM_Spectral(nn.Module):
         return x
 
 class SRNet(nn.Module):
-    def __init__(self, in_channels=1, out_channels=61, dim=32, deep_stage=3, num_blocks=[1, 1, 1], num_heads=[1, 2, 4]):
+    def __init__(self, in_channels=1, out_channels=61, dim=32, deep_stage=3, num_blocks=[1, 1, 1], num_heads=[1, 2, 4], use_partialconv=False):
         super(SRNet, self).__init__()
         self.dim = dim
         self.out_channels = out_channels
         self.stage = deep_stage
+        self.use_partialconv = use_partialconv
 
-        self.embedding1 = nn.Conv2d(in_channels, dim, kernel_size=3, padding=1, bias=False)
-        self.embedding2 = nn.Conv2d(out_channels, dim, kernel_size=3, padding=1, bias=False)
+        if self.use_partialconv:
+            self.embedding1_pconv = PartialConv2d(
+                in_channels,
+                dim,
+                kernel_size=3,
+                padding=1,
+                bias=False,
+                multi_channel=False,
+                return_mask=True,
+            )
+            self.embedding2_pconv = PartialConv2d(
+                out_channels,
+                dim,
+                kernel_size=3,
+                padding=1,
+                bias=False,
+                multi_channel=True,
+                return_mask=False,
+            )
+        else:
+            self.embedding1 = nn.Conv2d(in_channels, dim, kernel_size=3, padding=1, bias=False)
+            self.embedding2 = nn.Conv2d(out_channels, dim, kernel_size=3, padding=1, bias=False)
         self.embedding = nn.Conv2d(dim * 2, dim, kernel_size=3, padding=1, bias=False)
         
         self.down_sample = nn.Conv2d(dim, dim, 4, 2, 1, bias=False)
@@ -232,10 +254,18 @@ class SRNet(nn.Module):
         x: [b,c,h,w]
         return out:[b,c,h,w]
         """
-
-        x = self.embedding1(x)
-        mask = self.embedding2(mask)
-        x = torch.cat((x, mask), dim=1)
+        if self.use_partialconv:
+            # The spatial validity map is derived from whether this location
+            # still has any coded spectral response after masking.
+            valid_map = (torch.sum(torch.abs(mask), dim=1, keepdim=True) > 0).to(x.dtype)
+            x, _ = self.embedding1_pconv(x, valid_map)
+            expanded_valid_map = valid_map.repeat(1, mask.shape[1], 1, 1)
+            mask = self.embedding2_pconv(mask, expanded_valid_map)
+            x = torch.cat((x, mask), dim=1)
+        else:
+            x = self.embedding1(x)
+            mask = self.embedding2(mask)
+            x = torch.cat((x, mask), dim=1)
 
         fea = self.embedding(x)
         residual = fea
