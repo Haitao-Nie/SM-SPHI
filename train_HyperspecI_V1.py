@@ -28,6 +28,8 @@ parser.add_argument("--output_folder", type=str, default='./exp/HyperspecI_V1/',
 parser.add_argument("--start_dir", type=int, nargs=2, default=(0, 0), help="size of test image coordinate")
 parser.add_argument("--image_size", type=int, nargs=2, default=(2048, 2048), help="size of test image")
 parser.add_argument("--patch_size", type=int, nargs=2, default=(64, 64), help="HSI patch size")
+parser.add_argument("--spatial_keep_ratio", type=float, default=0.3, help="fraction of spatial locations kept in the binary spatial gate")
+parser.add_argument("--spatial_mask_seed", type=int, default=42, help="seed for deterministic spatial gate generation")
 parser.add_argument("--train_data_path", type=str, default="./ICVL_64/train/", help='path datasets')
 parser.add_argument("--valid_data_path", type=str, default="./ICVL_64/val/", help='path datasets')
 
@@ -41,7 +43,10 @@ criterion_psnr = Loss_PSNR()
 criterion_mrae = Loss_MRAE()
 criterion_sam = Loss_SAM()
 criterion_tv = Loss_TV(TVLoss_weight=float(0.5))
-data_processing = Data_Process()
+data_processing = Data_Process(
+    spatial_keep_ratio=opt.spatial_keep_ratio,
+    spatial_mask_seed=opt.spatial_mask_seed,
+)
 
 def load_mask():
     mask_init = load_mat_compat(opt.mask_path)['mask']

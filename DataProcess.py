@@ -2,11 +2,55 @@ import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
 import random
+import numpy as np
 
 class Data_Process(object):
-    def __init__(self):
+    def __init__(self, spatial_keep_ratio=0.3, spatial_mask_seed=42):
         self.noise_sigma = 0
         self.hsi_max = []
+        self.spatial_keep_ratio = spatial_keep_ratio
+        self.spatial_mask_seed = spatial_mask_seed
+        self._spatial_gate_cache = {}
+
+    def _generate_blue_noise_like_gate(self, patch_size):
+        cache_key = (patch_size[0], patch_size[1], float(self.spatial_keep_ratio), int(self.spatial_mask_seed))
+        if cache_key in self._spatial_gate_cache:
+            return self._spatial_gate_cache[cache_key]
+
+        height, width = patch_size
+        total = height * width
+        keep_count = max(1, min(total, int(round(total * self.spatial_keep_ratio))))
+
+        rng = np.random.default_rng(self.spatial_mask_seed)
+        coords = np.stack(np.meshgrid(np.arange(height), np.arange(width), indexing='ij'), axis=-1).reshape(-1, 2)
+
+        # Greedy farthest-point sampling gives a deterministic blue-noise-like pattern:
+        # selected points repel each other and spread evenly over the grid.
+        first_idx = int(rng.integers(total))
+        selected = [first_idx]
+        chosen = np.zeros(total, dtype=bool)
+        chosen[first_idx] = True
+
+        min_dist2 = np.sum((coords - coords[first_idx]) ** 2, axis=1).astype(np.float64)
+        min_dist2[first_idx] = -1.0
+
+        for _ in range(1, keep_count):
+            jitter = rng.random(total) * 1e-6
+            candidate_scores = min_dist2 + jitter
+            candidate_scores[chosen] = -1.0
+            next_idx = int(np.argmax(candidate_scores))
+            selected.append(next_idx)
+            chosen[next_idx] = True
+            dist2 = np.sum((coords - coords[next_idx]) ** 2, axis=1).astype(np.float64)
+            min_dist2 = np.minimum(min_dist2, dist2)
+            min_dist2[chosen] = -1.0
+
+        gate = np.zeros((height, width), dtype=np.float32)
+        selected_coords = coords[np.array(selected)]
+        gate[selected_coords[:, 0], selected_coords[:, 1]] = 1.0
+
+        self._spatial_gate_cache[cache_key] = gate
+        return gate
 
     def add_noise(self, inputs, sigma):
         noise = torch.zeros_like(inputs)
@@ -20,10 +64,8 @@ class Data_Process(object):
         fixed_h = max((image_size[0] - patch_size[0]) // 2, 0)
         fixed_w = max((image_size[1] - patch_size[1]) // 2, 0)
         mask_patch = mask[:, fixed_h:fixed_h + patch_size[0], fixed_w:fixed_w + patch_size[1]]
-        # Apply an RGGB-style spatial gate and zero out the two G positions.
-        spatial_gate = torch.ones((patch_size[0], patch_size[1]), device=mask_patch.device, dtype=mask_patch.dtype)
-        spatial_gate[0::2, 1::2] = 0
-        spatial_gate[1::2, 0::2] = 0
+        spatial_gate_np = self._generate_blue_noise_like_gate(patch_size)
+        spatial_gate = torch.from_numpy(spatial_gate_np).to(mask_patch.device, dtype=mask_patch.dtype)
         mask_patch = mask_patch * spatial_gate.unsqueeze(0)
         mask_patch = mask_patch / mask_patch.max()
         mask_patches = mask_patch.unsqueeze(0).repeat(batch_size, 1, 1, 1)
