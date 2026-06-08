@@ -3,19 +3,48 @@ import torch.nn as nn
 import matplotlib.pyplot as plt
 import random
 import numpy as np
+import os
 
 class Data_Process(object):
-    def __init__(self, spatial_keep_ratio=0.3, spatial_mask_seed=42):
+    def __init__(self, spatial_keep_ratio=0.3, spatial_mask_seed=42, spatial_mask_cache_root="./MASK/blue_noise_masks"):
         self.noise_sigma = 0
         self.hsi_max = []
         self.spatial_keep_ratio = spatial_keep_ratio
         self.spatial_mask_seed = spatial_mask_seed
+        self.spatial_mask_cache_root = spatial_mask_cache_root
         self._spatial_gate_cache = {}
+
+    def _get_spatial_gate_cache_path(self, patch_size):
+        ratio_dir = f"ratio_{self.spatial_keep_ratio:.2f}"
+        file_name = f"blue_noise_h{patch_size[0]}_w{patch_size[1]}_seed{self.spatial_mask_seed}.npy"
+        return os.path.join(self.spatial_mask_cache_root, ratio_dir, file_name)
+
+    def _save_spatial_gate_png(self, gate, cache_path):
+        png_path = os.path.splitext(cache_path)[0] + ".png"
+        plt.figure(figsize=(4, 4))
+        plt.imshow(gate, cmap="gray", vmin=0.0, vmax=1.0)
+        plt.title(
+            f"ratio={self.spatial_keep_ratio:.2f}, seed={self.spatial_mask_seed}\n"
+            f"keep={int(gate.sum())}/{gate.size}"
+        )
+        plt.axis("off")
+        plt.tight_layout()
+        plt.savefig(png_path, dpi=200, bbox_inches="tight")
+        plt.close()
 
     def _generate_blue_noise_like_gate(self, patch_size):
         cache_key = (patch_size[0], patch_size[1], float(self.spatial_keep_ratio), int(self.spatial_mask_seed))
         if cache_key in self._spatial_gate_cache:
             return self._spatial_gate_cache[cache_key]
+
+        cache_path = self._get_spatial_gate_cache_path(patch_size)
+        if os.path.exists(cache_path):
+            gate = np.load(cache_path).astype(np.float32)
+            png_path = os.path.splitext(cache_path)[0] + ".png"
+            if not os.path.exists(png_path):
+                self._save_spatial_gate_png(gate, cache_path)
+            self._spatial_gate_cache[cache_key] = gate
+            return gate
 
         height, width = patch_size
         total = height * width
@@ -49,6 +78,9 @@ class Data_Process(object):
         selected_coords = coords[np.array(selected)]
         gate[selected_coords[:, 0], selected_coords[:, 1]] = 1.0
 
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        np.save(cache_path, gate)
+        self._save_spatial_gate_png(gate, cache_path)
         self._spatial_gate_cache[cache_key] = gate
         return gate
 
