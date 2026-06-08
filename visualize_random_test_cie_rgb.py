@@ -2,7 +2,6 @@ import argparse
 import os
 import random
 
-import h5py
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -91,15 +90,6 @@ def resolve_spectrum_probe(hsi_cube, spectrum_xy):
     return x, y
 
 
-def save_reconstruction_h5(save_path, mos, gt_hsi, recon_hsi, wavelengths_nm, sample_name):
-    with h5py.File(save_path, "w") as f:
-        f["sample_name"] = np.bytes_(sample_name)
-        f["mos"] = mos
-        f["gt_hsi"] = gt_hsi
-        f["recon_hsi"] = recon_hsi
-        f["wavelengths_nm"] = wavelengths_nm
-
-
 def build_colour_tables(wavelengths_nm):
     interval = int(round(float(wavelengths_nm[1] - wavelengths_nm[0]))) if len(wavelengths_nm) > 1 else 1
     shape = SpectralShape(int(round(float(wavelengths_nm[0]))), int(round(float(wavelengths_nm[-1]))), interval)
@@ -145,9 +135,6 @@ def main():
 
     output_folder = resolve_output_folder(opt)
     os.makedirs(output_folder, exist_ok=True)
-    recon_h5_folder = os.path.join(output_folder, "recon_h5")
-    os.makedirs(recon_h5_folder, exist_ok=True)
-
     dataset = HyperspectralDataset(root_dir=opt.test_data_path)
     if opt.sample_index is None:
         sample_index = random.randrange(len(dataset))
@@ -207,16 +194,6 @@ def main():
     flat_abs_err = abs_err.reshape(-1)
 
     save_stem = os.path.splitext(sample_name)[0]
-    h5_path = os.path.join(recon_h5_folder, f"{save_stem}_recon.h5")
-    save_reconstruction_h5(
-        save_path=h5_path,
-        mos=mos_np,
-        gt_hsi=gt_np,
-        recon_hsi=recon_np,
-        wavelengths_nm=wavelengths_nm,
-        sample_name=sample_name,
-    )
-
     vis_path = os.path.join(output_folder, f"{save_stem}_vis.png")
     fig, axes = plt.subplots(2, 3, figsize=(18, 10))
 
@@ -261,7 +238,6 @@ def main():
 
     print(f"Output folder: {output_folder}")
     print(f"Saved visualization to: {vis_path}")
-    print(f"Saved reconstruction h5 to: {h5_path}")
     print(f"Shared RGB scale: {shared_scale:.6f}")
     print(f"Spectrum probe: (x={probe_x}, y={probe_y})")
 
