@@ -49,7 +49,7 @@ def initialize_logger(file_dir):
     logger.setLevel(logging.INFO)
     return logger
 
-def save_checkpoint(model_path, epoch, iteration, model, optimizer):
+def save_checkpoint(model_path, epoch, iteration, model, optimizer, filename='best_model.pth'):
     state = {
         'epoch': epoch,
         'iter': iteration,
@@ -57,7 +57,7 @@ def save_checkpoint(model_path, epoch, iteration, model, optimizer):
         'optimizer': optimizer.state_dict(),
     }
 
-    torch.save(state, os.path.join(model_path, 'net_%depoch.pth' % epoch))
+    torch.save(state, os.path.join(model_path, filename))
 
 class Loss_MRAE(nn.Module):
     def __init__(self):

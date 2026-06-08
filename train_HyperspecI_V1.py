@@ -115,7 +115,7 @@ def main():
     log_dir = os.path.join(output_path, 'train.log')
     logger = initialize_logger(log_dir)
 
-    record_rmse_loss = 10000
+    best_psnr = float('-inf')
     strat_time = time.time()
     
     for epoch in range(start_epoch, opt.end_epoch):
@@ -158,12 +158,13 @@ def main():
         strat_time = time.time()
         rmse_loss, psnr_loss, mrae_loss, sam_loss = Validate(val_loader, model, mask)
 
-        # Save model
-        if torch.abs(record_rmse_loss - rmse_loss) < 0.0001 or rmse_loss < record_rmse_loss or iteration % 10000 == 0:
-            print(f'Saving to {output_path}')
-            save_checkpoint(output_path, (epoch + 1), iteration, model, optimizer)
-            if rmse_loss < record_rmse_loss:
-                record_rmse_loss = rmse_loss
+        # Save only the best model according to validation PSNR
+        current_psnr = float(psnr_loss)
+        if current_psnr > best_psnr:
+            best_psnr = current_psnr
+            best_model_path = os.path.join(output_path, 'best_model.pth')
+            print(f'Saving best model to {best_model_path} (Val PSNR: {best_psnr:.4f})')
+            save_checkpoint(output_path, (epoch + 1), iteration, model, optimizer, filename='best_model.pth')
         # print loss
         print(" Epoch[%06d], Time[%06d], learning rate: %.9f, Train Loss: %.9f, "
               "Val RMSE: %.9f, Val PSNR: %.9f, Val MRAE: %.9f, Val SAM: %.9f "
