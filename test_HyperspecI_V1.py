@@ -43,14 +43,31 @@ parser.add_argument('--batch_size', type=int, default=1, help='batch size')
 parser.add_argument("--mask_path", type=str, default='./MASK/Mask_HyperspecI_V1.mat', help='path log files')
 parser.add_argument("--start_dir", type=int, default=(0, 0), help="size of test image coordinate")
 parser.add_argument("--image_size", type=int, default=(2048, 2048), help="size of test image")
-parser.add_argument("--pretrained_model_path", type=str, default='./Model_zoo/SRNet_V1.pth', help='path log files')
+parser.add_argument("--pretrained_model_path", type=str, default=None, help='path to checkpoint; auto-resolved by spatial_keep_ratio if omitted')
+parser.add_argument("--checkpoint_root", type=str, default='./exp/HyperspecI_V1/', help='root folder that stores ratio-specific checkpoints')
+parser.add_argument("--checkpoint_name", type=str, default='net_151epoch.pth', help='checkpoint file name inside the ratio-specific folder')
 parser.add_argument("--image_folder", type=str, default= './Measurements_Test/HyperspecI_V1/', help='path log files')
 parser.add_argument("--save_folder", type=str, default= './Measurements_Test/Output_HyperspecI_V1/', help='path log files')
+parser.add_argument("--spatial_keep_ratio", type=float, default=0.3, help="fraction of spatial locations kept in the binary spatial gate")
 
 
 opt = parser.parse_args()
 os.environ["CUDA_DEVICE_ORDER"] = 'PCI_BUS_ID'
 os.environ["CUDA_VISIBLE_DEVICES"] = opt.gpu_id
+
+
+def build_ratio_tag():
+    return f"ratio_{opt.spatial_keep_ratio:.2f}"
+
+
+def resolve_pretrained_model_path():
+    if opt.pretrained_model_path is not None:
+        return opt.pretrained_model_path
+    return os.path.join(opt.checkpoint_root, build_ratio_tag(), opt.checkpoint_name)
+
+
+def resolve_save_folder():
+    return os.path.join(opt.save_folder, build_ratio_tag())
 
 
 def main():
@@ -62,13 +79,18 @@ def main():
     mask = torch.from_numpy(mask)
     mask = mask.cuda()
     mask = mask.unsqueeze(0)
-    model = model_generator(opt.method, opt.pretrained_model_path)
+    pretrained_model_path = resolve_pretrained_model_path()
+    save_folder = resolve_save_folder()
+    print(f'pretrained_model_path: {pretrained_model_path}')
+    print(f'save_folder: {save_folder}')
+
+    model = model_generator(opt.method, pretrained_model_path)
     total_params = sum(p.numel() for p in model.parameters())
     print(f'{total_params:,} total parameters.')
     if torch.cuda.is_available():
         model.cuda()
-    if not os.path.exists(opt.save_folder):
-        os.makedirs(opt.save_folder)
+    if not os.path.exists(save_folder):
+        os.makedirs(save_folder)
 
     test_list = os.listdir(opt.image_folder)
     test_list.sort()
@@ -95,7 +117,7 @@ def main():
                 print('outputs>>>>>>>>>>', mos_name[k], output_hsi.shape, output_hsi.max(), output_hsi.mean(), output_hsi.min())
 
                 
-                f = h5py.File(opt.save_folder + 'HSI_R_' + mos_name[k][:-4] + '.h5', 'w')
+                f = h5py.File(os.path.join(save_folder, 'HSI_R_' + mos_name[k][:-4] + '.h5'), 'w')
                 f['mos'] = input_mos
                 f['hsi_R'] = output_hsi
                 f.close()

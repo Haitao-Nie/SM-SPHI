@@ -50,6 +50,11 @@ data_processing = Data_Process(
     spatial_mask_cache_root=opt.spatial_mask_cache_root,
 )
 
+
+def build_output_path():
+    ratio_tag = f"ratio_{opt.spatial_keep_ratio:.2f}"
+    return os.path.join(opt.output_folder, ratio_tag)
+
 def load_mask():
     mask_init = load_mat_compat(opt.mask_path)['mask']
     print('mask_init:', mask_init.shape)
@@ -76,7 +81,8 @@ def main():
     print('len(train_data):', len(train_data))
     val_data = HyperspectralDataset(root_dir=opt.valid_data_path)
     print('len(valid_data):', len(val_data))
-    output_path = opt.output_folder
+    output_path = build_output_path()
+    print(f'output_path: {output_path}')
 
     if not os.path.exists(output_path):
         os.makedirs(output_path)
