@@ -28,6 +28,7 @@ def parse_args():
     parser.add_argument("--test_data_path", type=str, default="./ICVL_64/test/", help="Path to test patch dataset")
     parser.add_argument("--output_folder", type=str, default="./vis_test_v1/", help="Folder for visualization outputs")
     parser.add_argument("--sample_index", type=int, default=None, help="Fixed test sample index; random if omitted")
+    parser.add_argument("--vis_num", type=int, default=50, help="Number of test samples to visualize")
     parser.add_argument("--random_seed", type=int, default=42, help="Seed for random sample selection")
     parser.add_argument("--sigma", type=float, nargs="+", default=(0, 1 / 255, 2 / 255, 3 / 255), help="Gaussian noise sigma used in synthesized measurement")
     parser.add_argument("--start_dir", type=int, nargs=2, default=(0, 0), help="Top-left crop position in the calibrated mask")
@@ -119,6 +120,16 @@ def hsi_to_srgb_with_colour(hsi_cube, colour_tables, scale=None):
     return np.clip(rgb, 0.0, 1.0), scale
 
 
+def select_sample_indices(dataset_size, sample_index, vis_num):
+    if dataset_size <= 0:
+        return []
+    if sample_index is not None:
+        return [int(np.clip(sample_index, 0, dataset_size - 1))]
+
+    vis_count = max(1, min(int(vis_num), dataset_size))
+    return random.sample(range(dataset_size), vis_count)
+
+
 def main():
     opt = parse_args()
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
@@ -135,111 +146,109 @@ def main():
 
     output_folder = resolve_output_folder(opt)
     os.makedirs(output_folder, exist_ok=True)
-    dataset = HyperspectralDataset(root_dir=opt.test_data_path)
-    if opt.sample_index is None:
-        sample_index = random.randrange(len(dataset))
-    else:
-        sample_index = int(np.clip(opt.sample_index, 0, len(dataset) - 1))
-
-    sample_name = dataset.files[sample_index]
     print(f"checkpoint: {pretrained_model_path}")
-    print(f"Selected sample [{sample_index}]: {sample_name}")
+    dataset = HyperspectralDataset(root_dir=opt.test_data_path)
+    selected_indices = select_sample_indices(len(dataset), opt.sample_index, opt.vis_num)
+    print(f"Visualizing {len(selected_indices)} sample(s)")
 
-    gt_hsi = dataset[sample_index].unsqueeze(0).cuda()
     mask = load_mask(opt.mask_path, opt.start_dir, opt.image_size)
-
+    model = model_generator(opt.method, pretrained_model_path)
+    model.eval()
     data_processing = Data_Process(
         spatial_keep_ratio=opt.spatial_keep_ratio,
         spatial_mask_seed=opt.spatial_mask_seed,
         spatial_mask_cache_root=opt.spatial_mask_cache_root,
     )
-    mask_patch = data_processing.get_fixed_center_mask_patches(
-        mask=mask,
-        image_size=opt.image_size,
-        patch_size=opt.patch_size,
-        batch_size=1,
-    )
-    mos, gt_target = data_processing.get_mos_hsi(
-        hsi=gt_hsi,
-        mask=mask_patch,
-        sigma=tuple(opt.sigma),
-        mos_size=opt.patch_size[0],
-        hsi_input_size=opt.patch_size[0],
-        hsi_target_size=opt.patch_size[0],
-    )
 
-    model = model_generator(opt.method, pretrained_model_path)
-    model.eval()
+    for order, sample_index in enumerate(selected_indices, start=1):
+        sample_name = dataset.files[sample_index]
+        print(f"[{order}/{len(selected_indices)}] Selected sample [{sample_index}]: {sample_name}")
 
-    with torch.no_grad():
-        recon_hsi = model(mos, mask_patch)
-        recon_hsi = torch.clamp(recon_hsi, min=0.0)
+        gt_hsi = dataset[sample_index].unsqueeze(0).cuda()
+        mask_patch = data_processing.get_fixed_center_mask_patches(
+            mask=mask,
+            image_size=opt.image_size,
+            patch_size=opt.patch_size,
+            batch_size=1,
+        )
+        mos, gt_target = data_processing.get_mos_hsi(
+            hsi=gt_hsi,
+            mask=mask_patch,
+            sigma=tuple(opt.sigma),
+            mos_size=opt.patch_size[0],
+            hsi_input_size=opt.patch_size[0],
+            hsi_target_size=opt.patch_size[0],
+        )
 
-    mos_np = tensor_to_numpy_chw(mos[0])[0]
-    gt_np = tensor_to_numpy_chw(gt_target[0])
-    recon_np = tensor_to_numpy_chw(recon_hsi[0])
-    wavelengths_nm = np.linspace(400.0, 700.0, gt_np.shape[0], dtype=np.float32)
+        with torch.no_grad():
+            recon_hsi = model(mos, mask_patch)
+            recon_hsi = torch.clamp(recon_hsi, min=0.0)
 
-    colour_tables = build_colour_tables(wavelengths_nm)
-    gt_rgb_raw, gt_scale = hsi_to_srgb_with_colour(gt_np, colour_tables, scale=None)
-    recon_rgb_raw, recon_scale = hsi_to_srgb_with_colour(recon_np, colour_tables, scale=None)
-    shared_scale = max(gt_scale, recon_scale, 1e-8)
-    gt_rgb, _ = hsi_to_srgb_with_colour(gt_np, colour_tables, scale=shared_scale)
-    recon_rgb, _ = hsi_to_srgb_with_colour(recon_np, colour_tables, scale=shared_scale)
+        mos_np = tensor_to_numpy_chw(mos[0])[0]
+        gt_np = tensor_to_numpy_chw(gt_target[0])
+        recon_np = tensor_to_numpy_chw(recon_hsi[0])
+        wavelengths_nm = np.linspace(400.0, 700.0, gt_np.shape[0], dtype=np.float32)
 
-    abs_err, mae_map = compute_error_maps(gt_np, recon_np)
-    probe_x, probe_y = resolve_spectrum_probe(gt_np, opt.spectrum_xy)
-    gt_spectrum = gt_np[:, probe_y, probe_x]
-    recon_spectrum = recon_np[:, probe_y, probe_x]
-    flat_abs_err = abs_err.reshape(-1)
+        colour_tables = build_colour_tables(wavelengths_nm)
+        _, gt_scale = hsi_to_srgb_with_colour(gt_np, colour_tables, scale=None)
+        _, recon_scale = hsi_to_srgb_with_colour(recon_np, colour_tables, scale=None)
+        shared_scale = max(gt_scale, recon_scale, 1e-8)
+        gt_rgb, _ = hsi_to_srgb_with_colour(gt_np, colour_tables, scale=shared_scale)
+        recon_rgb, _ = hsi_to_srgb_with_colour(recon_np, colour_tables, scale=shared_scale)
 
-    save_stem = os.path.splitext(sample_name)[0]
-    vis_path = os.path.join(output_folder, f"{save_stem}_vis.png")
-    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+        abs_err, mae_map = compute_error_maps(gt_np, recon_np)
+        probe_x, probe_y = resolve_spectrum_probe(gt_np, opt.spectrum_xy)
+        gt_spectrum = gt_np[:, probe_y, probe_x]
+        recon_spectrum = recon_np[:, probe_y, probe_x]
+        flat_abs_err = abs_err.reshape(-1)
 
-    axes[0, 0].imshow(gt_rgb)
-    axes[0, 0].set_title("GT pseudo-RGB")
-    axes[0, 0].axis("off")
+        save_stem = os.path.splitext(sample_name)[0]
+        vis_path = os.path.join(output_folder, f"{save_stem}_vis.png")
+        fig, axes = plt.subplots(2, 3, figsize=(18, 10))
 
-    axes[0, 1].imshow(mos_np, cmap="gray")
-    axes[0, 1].set_title("Simulated MOS")
-    axes[0, 1].axis("off")
+        axes[0, 0].imshow(gt_rgb)
+        axes[0, 0].set_title("GT pseudo-RGB")
+        axes[0, 0].axis("off")
 
-    axes[0, 2].imshow(recon_rgb)
-    axes[0, 2].set_title("Reconstructed pseudo-RGB")
-    axes[0, 2].axis("off")
+        axes[0, 1].imshow(mos_np, cmap="gray")
+        axes[0, 1].set_title("Simulated MOS")
+        axes[0, 1].axis("off")
 
-    im = axes[1, 0].imshow(mae_map, cmap="magma")
-    axes[1, 0].set_title("Mean Absolute Error Map")
-    axes[1, 0].axis("off")
-    fig.colorbar(im, ax=axes[1, 0], fraction=0.046, pad=0.04)
+        axes[0, 2].imshow(recon_rgb)
+        axes[0, 2].set_title("Reconstructed pseudo-RGB")
+        axes[0, 2].axis("off")
 
-    axes[1, 1].plot(wavelengths_nm, gt_spectrum, label="GT", linewidth=2)
-    axes[1, 1].plot(wavelengths_nm, recon_spectrum, label="Recon", linewidth=2)
-    axes[1, 1].set_title(f"Spectrum @ ({probe_x}, {probe_y})")
-    axes[1, 1].set_xlabel("Wavelength (nm)")
-    axes[1, 1].set_ylabel("Reflectance")
-    axes[1, 1].grid(True, alpha=0.3)
-    axes[1, 1].legend()
+        im = axes[1, 0].imshow(mae_map, cmap="magma")
+        axes[1, 0].set_title("Mean Absolute Error Map")
+        axes[1, 0].axis("off")
+        fig.colorbar(im, ax=axes[1, 0], fraction=0.046, pad=0.04)
 
-    axes[1, 2].hist(flat_abs_err, bins=opt.hist_bins)
-    axes[1, 2].set_title("|Recon - GT| histogram")
-    axes[1, 2].set_xlabel("Absolute error")
-    axes[1, 2].set_ylabel("Count")
-    axes[1, 2].grid(True, alpha=0.2)
+        axes[1, 1].plot(wavelengths_nm, gt_spectrum, label="GT", linewidth=2)
+        axes[1, 1].plot(wavelengths_nm, recon_spectrum, label="Recon", linewidth=2)
+        axes[1, 1].set_title(f"Spectrum @ ({probe_x}, {probe_y})")
+        axes[1, 1].set_xlabel("Wavelength (nm)")
+        axes[1, 1].set_ylabel("Reflectance")
+        axes[1, 1].grid(True, alpha=0.3)
+        axes[1, 1].legend()
 
-    fig.suptitle(
-        f"{save_stem}\nPseudo-RGB rendered with colour / CIE 1931 + D65",
-        fontsize=16,
-    )
-    plt.tight_layout(rect=[0, 0, 1, 0.95])
-    plt.savefig(vis_path, dpi=200, bbox_inches="tight")
-    plt.close(fig)
+        axes[1, 2].hist(flat_abs_err, bins=opt.hist_bins)
+        axes[1, 2].set_title("|Recon - GT| histogram")
+        axes[1, 2].set_xlabel("Absolute error")
+        axes[1, 2].set_ylabel("Count")
+        axes[1, 2].grid(True, alpha=0.2)
 
-    print(f"Output folder: {output_folder}")
-    print(f"Saved visualization to: {vis_path}")
-    print(f"Shared RGB scale: {shared_scale:.6f}")
-    print(f"Spectrum probe: (x={probe_x}, y={probe_y})")
+        fig.suptitle(
+            f"{save_stem}\nPseudo-RGB rendered with colour / CIE 1931 + D65",
+            fontsize=16,
+        )
+        plt.tight_layout(rect=[0, 0, 1, 0.95])
+        plt.savefig(vis_path, dpi=200, bbox_inches="tight")
+        plt.close(fig)
+
+        print(f"Output folder: {output_folder}")
+        print(f"Saved visualization to: {vis_path}")
+        print(f"Shared RGB scale: {shared_scale:.6f}")
+        print(f"Spectrum probe: (x={probe_x}, y={probe_y})")
 
 
 if __name__ == "__main__":
