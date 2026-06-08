@@ -53,7 +53,7 @@ data_processing = Data_Process(
 
 def build_output_path():
     ratio_tag = f"ratio_{opt.spatial_keep_ratio:.2f}"
-    return os.path.join(opt.output_folder, ratio_tag)
+    return os.path.normpath(os.path.join(opt.output_folder, ratio_tag))
 
 def load_mask():
     mask_init = load_mat_compat(opt.mask_path)['mask']
@@ -162,7 +162,7 @@ def main():
         current_psnr = float(psnr_loss)
         if current_psnr > best_psnr:
             best_psnr = current_psnr
-            best_model_path = os.path.join(output_path, 'best_model.pth')
+            best_model_path = os.path.normpath(os.path.join(output_path, 'best_model.pth'))
             print(f'Saving best model to {best_model_path} (Val PSNR: {best_psnr:.4f})')
             save_checkpoint(output_path, (epoch + 1), iteration, model, optimizer, filename='best_model.pth')
         # print loss
